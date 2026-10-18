@@ -2,6 +2,8 @@
 
 **A stereo tape delay plugin for macOS, Windows and Linux (VST3 · AU · CLAP · VST2).**
 
+Part of **[Epsilon Audio](https://github.com/natehouk/epsilon-plugins)**, a family of free, open-source plugins: Monolith, Caldera, Obsidian, Strata and Basalt.
+
 ![Strata](screenshot.png)
 
 Strata is a clean-room design with the feature set of FabFilter Timeless, FabFilter's fourth plugin (October 2006). It was written from scratch, working only from FabFilter's public press release and contemporary reviews. No FabFilter code, binaries, presets, artwork or trademarks were used.
