@@ -917,7 +917,7 @@ protected:
         const float s = uiScale(), x = ev.pos.getX() / s, y = ev.pos.getY() / s;
         if (saving) return true;
         if (ev.press) statusFlash = 0;
-        if (ev.button == 3 && ev.press) {
+        if (ev.button == 2 && ev.press) {
             if (menuOpen) { const int m = menuHit(x, y); if (m >= 0 && menuItem(m).kind == 1) { pendingDelete = menuItem(m).idx; repaint(); } return true; }
             const int i = hit(x, y);
             if (learnMode && i >= 0) { const uint32_t p = controls()[i].param; char b[24]; snprintf(b, sizeof b, "unmap:%u", p); setState("cmd", b); paramCC[p] = -1; repaint(); return true; }
