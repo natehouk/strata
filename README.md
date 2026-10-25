@@ -20,9 +20,9 @@ Get the latest build from [**Releases**](../../releases):
 
 | Platform | File | Contains |
 |---|---|---|
-| macOS 10.13+ (Apple Silicon + Intel) | `Strata-macos-universal.zip` | VST3, AU, CLAP |
-| Windows x64 | `Strata-windows-x64.zip` | VST3, CLAP, VST2 |
-| Linux x64 | `Strata-linux-x64.zip` | VST3, CLAP, VST2 |
+| macOS 10.13+ (Apple Silicon + Intel) | `Strata-macos-universal.zip` | VST3, AU, CLAP, manual |
+| Windows x64 | `Strata-windows-x64.zip` | VST3, CLAP, VST2, manual |
+| Linux x64 | `Strata-linux-x64.zip` | VST3, CLAP, VST2, manual |
 
 ### Install
 
@@ -32,7 +32,7 @@ Get the latest build from [**Releases**](../../releases):
 | Windows | `Strata.vst3` (folder) / `Strata.clap` | `C:\Program Files\Common Files\VST3\` / `CLAP\` |
 | Linux | `Strata.vst3` / `Strata.clap` | `~/.vst3/` / `~/.clap/` |
 
-**macOS:** the plugins are ad-hoc signed, not notarized. After copying, run:
+**macOS:** builds are notarized once the project's Apple signing credentials are set up. Until then they are ad-hoc signed; after copying, run:
 
 ```
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/*/Strata*
@@ -101,7 +101,9 @@ Strata is an audio effect that also accepts MIDI. To use the MIDI sources (veloc
 
 **The echo display** draws every repeat of a single hit on both lines. It includes feedback, cross-feedback, inversion (shown as hollow dots) and how the loop filters affect each pass. It updates live as the times are modulated.
 
-**Workflow** (shared with Caldera and Obsidian)
+**Workflow**
+- **A/B** with copy, and **undo/redo** for every edit, including new modulation, tap tempo, preset loads and A/B switches.
+- **Hover tips** everywhere, a **HELP window**, and a **[full manual](docs/MANUAL.md)** (also in every release zip as `Strata-Manual.html`).
 - **MIDI Learn:**
   1. Click **LEARN**.
   2. Click a control, then move a knob or fader on your controller.
@@ -116,7 +118,11 @@ Strata is an audio effect that also accepts MIDI. To use the MIDI sources (veloc
   - Windows: `%APPDATA%\Epsilon Audio\Strata\Presets\`
   - Linux: `~/.config/epsilon-audio/strata/presets/`
 - To delete a user preset, right-click it in the menu, then click it again to confirm.
-- **Resizable** window, double-click to **type a value**, **Cmd/Ctrl-click** to reset a control, and hover a control to see its name and value.
+- **Resizable** window, double-click to **type a value**, **Cmd/Ctrl-click** to reset a control, grab the rim of a large knob to turn it in a circle, and hover a control to see its name and value, then a tip.
+
+![Presets](screenshot-presets.png)
+
+![Help](screenshot-help.png)
 
 ### Compared with FabFilter Timeless (2006)
 
@@ -134,6 +140,8 @@ Strata is an audio effect that also accepts MIDI. To use the MIDI sources (veloc
 | Sources: velocity, aftertouch, key track, pitch bend, mod wheel | ✓ |
 | Delay, echo, chorus, flanger, phaser, scratching | ✓ |
 | MIDI Learn, parameter smoothing | ✓ |
+| Undo/redo, A/B (later FabFilter versions) | ✓ |
+| Help with interactive hints (later FabFilter versions) | ✓ hover tips, help pages and full manual |
 | 200+ factory presets, per-component presets | 43, plus saving your own (whole-plugin only) |
 | Pro Tools (RTAS/AAX) | Not supported (needs Avid's SDK and signing) |
 
@@ -147,7 +155,7 @@ make -C plugins/Strata                    # Linux / macOS (macOS also builds the
 make -C plugins/Strata WINDOWS=true CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++
 ```
 
-GitHub Actions builds all three platforms on every push. The macOS build is universal and ad-hoc signed. A `v*` tag, or a release published on GitHub, attaches the zips to that release.
+GitHub Actions builds all three platforms on every push. The macOS build is universal. It is signed and notarized when the Developer ID secrets are set (`MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`, `NOTARY_KEY`, `NOTARY_KEY_ID`, `NOTARY_ISSUER`), and ad-hoc signed otherwise. A `v*` tag, or a release published on GitHub, attaches the zips to that release.
 
 ## Tests
 
@@ -163,7 +171,7 @@ In the benchmark's worst case (stretch mode crossfading, both filters at 48 dB, 
 
 Release checks:
 - Steinberg's VST3 validator passes 47/47.
-- The interface is exercised with scripted input, including drag-and-drop modulation, tap tempo, the slot pickers, MIDI Learn and presets.
+- The interface is exercised with scripted input, including drag-and-drop modulation, tap tempo, the slot pickers, MIDI Learn, presets, A/B, undo and redo, hover tips and help.
 
 ## Source layout
 
@@ -173,10 +181,17 @@ Release checks:
 | `plugins/Strata/ParamDefs.hpp` | Parameter table, labels, modulation source and destination names, value mapping |
 | `plugins/Strata/Presets.hpp` | Factory presets |
 | `plugins/Strata/UserPresets.hpp` | User preset files |
+| `plugins/Strata/Help.hpp` | Hover tip text and in-plugin help pages |
 | `plugins/Strata/StrataPlugin.cpp` | Plugin wrapper: parameters, programs, MIDI, MIDI Learn, transport |
 | `plugins/Strata/StrataUI.cpp` | Custom vector interface (NanoVG) |
+| `docs/MANUAL.md` | User manual (`Strata-Manual.html` is generated from it with pandoc) |
 
 New parameters are only ever appended, so saved sessions and automation keep working across versions.
+
+## Changelog
+
+- **2.0:** A/B with copy, undo/redo, hover tips, a help window and a full manual (in every release zip), rim-grab turning on the large knobs. Sessions and automation from 1.x load unchanged.
+- **1.0:** First release.
 
 ## License
 

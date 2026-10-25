@@ -3,8 +3,10 @@
 #include "ParamDefs.hpp"
 #include "Presets.hpp"
 #include "UserPresets.hpp"
+#include "Help.hpp"
 #include "ResizeHandle.hpp"
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdio>
@@ -13,7 +15,23 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+extern "C" __declspec(dllimport) void* __stdcall ShellExecuteA(void*, const char*, const char*, const char*, const char*, int);
+#endif
+
 START_NAMESPACE_DISTRHO
+
+static void openURL(const char* url) {
+#if defined(_WIN32)
+    ShellExecuteA(nullptr, "open", url, nullptr, nullptr, 1);
+#elif defined(__APPLE__)
+    const std::string c = std::string("open '") + url + "' &"; if (std::system(c.c_str())) {}
+#else
+    const std::string c = std::string("xdg-open '") + url + "' >/dev/null 2>&1 &"; if (std::system(c.c_str())) {}
+#endif
+}
+static bool gTipsOn = true;
+static double nowSec() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 using namespace strata;
 using DGL_NAMESPACE::ResizeHandle;
@@ -172,8 +190,11 @@ static const char* const* segLabels(uint32_t p, int& n) {
     }
 }
 
-static constexpr float PS_X = 484.f, PS_Y = 20.f, PS_W = 272.f, PS_H = 28.f, PS_ARROW = 30.f;
-static constexpr float LEARN_X = 782.f, LEARN_W = 72.f, MIDI_X = 862.f, MIDI_W = 56.f;
+// header:  logo · preset bar · A B COPY · UNDO REDO · LEARN MIDI · HELP
+static constexpr float PS_X = 484.f, PS_Y = 20.f, PS_W = 260.f, PS_H = 28.f, PS_ARROW = 30.f;
+static constexpr float A_X = 756.f, AB_W = 30.f, COPY_X = 818.f, COPY_W = 46.f;
+static constexpr float UNDO_X = 874.f, REDO_X = 926.f, UR_W = 48.f;
+static constexpr float LEARN_X = 984.f, LEARN_W = 70.f, MIDI_X = 1060.f, MIDI_W = 50.f, HELP_X = 1116.f, HELP_W = 50.f;
 static constexpr float PM_COLW = 146.f, PM_ROW = 23.f, PM_HEAD = 22.f, PM_PAD = 8.f;
 
 static int slopeStages(float v) { const int s = (int)(v + .5f); return s == 0 ? 1 : (s == 1 ? 2 : 4); }
@@ -216,10 +237,41 @@ public:
         setGeometryConstraints((uint)(W * 0.6 * sf), (uint)(H * 0.6 * sf), true);
         if (isResizable()) resizeHandle.hide();
         userPresets = listUserPresets();
+        std::copy(val, val + kParamCount, before);
     }
 
 protected:
     float uiScale() const { return (float)getWidth() / W; }
+    static bool isOut(uint32_t p) { return (paramDef(p).hints & kHintOutput) != 0; }
+
+    // ---- undo / redo / A-B (outputs are not part of a setting) ----------------
+    typedef std::vector<float> Snap;
+    Snap snapshot() const { Snap s(val, val + kParamCount); s.push_back((float)abSlot); return s; }
+    static bool differs(const float* a, const float* b) { for (uint32_t i = 0; i < kParamCount; ++i) if (!isOut(i) && a[i] != b[i]) return true; return false; }
+    void beginGesture() { gesture = true; std::copy(val, val + kParamCount, before); }
+    void endGesture() {
+        gesture = false;
+        if (differs(before, val)) {
+            Snap u(before, before + kParamCount); u.push_back((float)abSlot);
+            undoStack.push_back(u); if (undoStack.size() > 200) undoStack.erase(undoStack.begin());
+            redoStack.clear();
+        }
+        std::copy(val, val + kParamCount, before); repaint();
+    }
+    void applyAll(const float* s) { for (uint32_t i = 0; i < kParamCount; ++i) if (!isOut(i) && val[i] != s[i]) commit(i, s[i]); }
+    void restoreSnap(const Snap& s) {
+        if (s.size() > kParamCount && (int)s[kParamCount] != abSlot) { abStore[abSlot] = snapshot(); abSlot = (int)s[kParamCount]; }
+        applyAll(s.data()); std::copy(val, val + kParamCount, before);
+    }
+    void undo() { if (undoStack.empty()) return; redoStack.push_back(snapshot()); restoreSnap(undoStack.back()); undoStack.pop_back(); flash("Undo"); }
+    void redo() { if (redoStack.empty()) return; undoStack.push_back(snapshot()); restoreSnap(redoStack.back()); redoStack.pop_back(); flash("Redo"); }
+    void switchAB(int to) {
+        if (to == abSlot) return;
+        abStore[abSlot] = snapshot(); if (abStore[to].empty()) abStore[to] = snapshot();
+        beginGesture(); applyAll(abStore[to].data()); endGesture();
+        abSlot = to; flash(to == 0 ? "Setting A" : "Setting B");
+    }
+    void copyAB() { abStore[1 - abSlot] = snapshot(); flash(abSlot == 0 ? "Copied A to B" : "Copied B to A"); }
 
     // ---- values -------------------------------------------------------------
     void setValue(uint32_t p, float v) {
@@ -241,7 +293,7 @@ protected:
             }
             lastLearnEcho = v; repaint(); return;
         }
-        if (val[i] != v) { val[i] = v; repaint(); }
+        if (val[i] != v) { val[i] = v; if (!gesture && !isOut(i)) before[i] = v; repaint(); }
     }
     void stateChanged(const char* key, const char* value) override {
         if (std::strcmp(key, "midimap") != 0) return;
@@ -345,11 +397,22 @@ protected:
             fillColor(bands[i]); fill();
         }
         fontSize(22); textLetterSpacing(9); fillColor(C_TEXT); textAlign(ALIGN_LEFT | ALIGN_MIDDLE); text(50, 34, "STRATA", nullptr);
-        fontSize(10); textLetterSpacing(2.5f); fillColor(C_DIM); text(216, 35, "STEREO TAPE DELAY", nullptr);
-        textAlign(ALIGN_RIGHT | ALIGN_MIDDLE); text(W - 22, 35, "EPSILON AUDIO  ·  1.0", nullptr);
+        fontSize(9.5f); textLetterSpacing(2.5f); fillColor(C_DIM); text(216, 29, "STEREO TAPE DELAY", nullptr);
+        fontSize(7); textLetterSpacing(1.1f); fillColor(C_FAINT); text(216, 41, "EPSILON AUDIO 2.0", nullptr);
         drawPresetBar();
+        for (int k = 0; k < 2; ++k) {
+            const float x = A_X + k * AB_W; const bool on = abSlot == k, hot = hoverHeader == 6 + k;
+            beginPath(); roundedRect(x, PS_Y, AB_W - 2, PS_H, 5); fillColor(on ? withAlpha(C_ACC, 0.25f) : C_PANEL); fill();
+            strokeColor(on ? C_ACC : (hot ? C_DIM : C_LINE)); strokeWidth(1); stroke();
+            fontSize(10); textLetterSpacing(0); textAlign(ALIGN_CENTER | ALIGN_MIDDLE); fillColor(on ? C_TEXT : C_DIM);
+            text(x + (AB_W - 2) / 2, PS_Y + PS_H / 2 + 0.5f, k == 0 ? "A" : "B", nullptr);
+        }
+        drawHeaderButton(COPY_X, COPY_W, "COPY", false, hoverHeader == 8);
+        drawHeaderButton(UNDO_X, UR_W, "UNDO", false, hoverHeader == 3, undoStack.empty());
+        drawHeaderButton(REDO_X, UR_W, "REDO", false, hoverHeader == 4, redoStack.empty());
         drawHeaderButton(LEARN_X, LEARN_W, learnMode ? "LEARNING" : "LEARN", learnMode, hoverHeader == 1);
         drawHeaderButton(MIDI_X, MIDI_W, "MIDI", val[kMidiOn] > 0.5f, hoverHeader == 2);
+        drawHeaderButton(HELP_X, HELP_W, "HELP", helpOpen, hoverHeader == 5);
 
         for (const Panel& p : kPanels) drawPanel(p);
         drawSideMarks();
@@ -373,6 +436,8 @@ protected:
         if (popup.open) drawPopup();
         if (menuOpen) drawPresetMenu();
         if (saving) drawSaveBox();
+        if (helpOpen) drawHelp();
+        else if (tipShown && gTipsOn) drawTooltip();
         restore();
         if (tapFlash > 0) { --tapFlash; repaint(); }
     }
@@ -386,10 +451,10 @@ protected:
         fontSize(9); textLetterSpacing(2.f); textAlign(ALIGN_CENTER | ALIGN_MIDDLE); fillColor(on ? C_TEXT : (hot ? C_TEXT : C_DIM));
         text(x + w / 2, y + h / 2 + 0.5f, label, nullptr);
     }
-    void drawHeaderButton(float x, float w, const char* label, bool on, bool hot) {
+    void drawHeaderButton(float x, float w, const char* label, bool on, bool hot, bool disabled = false) {
         beginPath(); roundedRect(x, PS_Y, w, PS_H, 5); fillColor(on ? withAlpha(C_ACC, 0.22f) : C_PANEL); fill();
-        strokeColor(on ? C_ACC : (hot ? C_DIM : C_LINE)); strokeWidth(1); stroke();
-        fontSize(9.5f); textLetterSpacing(2.f); textAlign(ALIGN_CENTER | ALIGN_MIDDLE); fillColor(on ? C_TEXT : C_DIM);
+        strokeColor(on ? C_ACC : (hot && !disabled ? C_DIM : C_LINE)); strokeWidth(1); stroke();
+        fontSize(9); textLetterSpacing(1.6f); textAlign(ALIGN_CENTER | ALIGN_MIDDLE); fillColor(disabled ? C_FAINT : (on ? C_TEXT : C_DIM));
         text(x + w / 2, PS_Y + PS_H / 2 + 0.5f, label, nullptr);
     }
     void drawPanel(const Panel& p) {
@@ -662,7 +727,7 @@ protected:
 
     void drawStatus() {
         std::string msg; char vb[48];
-        if (statusFlash > 0) msg = statusText;
+        if (flashing()) msg = statusText;
         else if (learnMode) msg = learnWaiting >= 0 ? std::string("Move a MIDI controller: ") + paramDef(learnWaiting).name : "MIDI Learn: click a control, move a controller. Right-click unassigns.";
         else if (dragSrc > 0) { const int h = hover; msg = std::string("Drop ") + sourceName(dragSrc) + (h >= 0 && destForParam(effParam(controls()[h])) >= 0 ? std::string(" onto ") + destName(destForParam(effParam(controls()[h]))) : " onto a knob"); }
         else if (hoverTap) msg = "Click in time to set the delay. The right side keeps its ratio to the left.";
@@ -673,15 +738,15 @@ protected:
             else if (c.type == SlotByp) msg = "Bypass this modulation";
             else { fmt(p, vb, sizeof vb); msg = std::string(paramDef(p).name) + "   " + vb; }
         } else msg = "Drag a source onto any knob to modulate it";
-        fontSize(9); textLetterSpacing(0.6f); textAlign(ALIGN_RIGHT | ALIGN_MIDDLE); fillColor(learnMode || statusFlash > 0 ? C_ACC : C_DIM);
+        fontSize(9); textLetterSpacing(0.6f); textAlign(ALIGN_RIGHT | ALIGN_MIDDLE); fillColor(learnMode || flashing() ? C_ACC : C_DIM);
         text(MODX + MODW - 14, R3 + 27, msg.c_str(), nullptr);
         if (learnMode && learnWaiting < 0) {
             beginPath(); roundedRect(CLR_X, R3 + 9, CLR_W, CHIP_H, 4); fillColor(hoverClear ? withAlpha(C_ACC, 0.25f) : C_PANEL_HI); fill(); strokeColor(C_ACC); strokeWidth(1); stroke();
             fontSize(8); textLetterSpacing(1.2f); textAlign(ALIGN_CENTER | ALIGN_MIDDLE); fillColor(C_TEXT); text(CLR_X + CLR_W / 2, R3 + 9 + CHIP_H / 2 + 0.5f, "CLEAR ALL CCs", nullptr);
         }
-        if (statusFlash > 0) --statusFlash;
     }
-    void flash(const std::string& s) { statusText = s; statusFlash = 120; repaint(); }
+    void flash(const std::string& s) { statusText = s; flashUntil = nowSec() + 2.0; repaint(); }
+    bool flashing() const { return nowSec() < flashUntil; }
 
     void drawEditBox() {
         const Ctl& c = controls()[editing];
@@ -728,7 +793,7 @@ protected:
         }
         return true;
     }
-    void applyValues(const float* v) { for (uint32_t i = 0; i < kParamCount; ++i) if (!(paramDef(i).hints & kHintOutput) && val[i] != v[i]) commit(i, v[i]); }
+    void applyValues(const float* v) { beginGesture(); applyAll(v); endGesture(); }
     void applyFactory(int idx) { idx = (idx % (int)kNumPresets + (int)kNumPresets) % (int)kNumPresets; applyValues(presets()[idx].v); curFactory = idx; curUser.clear(); repaint(); }
     void applyUser(const std::string& name) { float v[kParamCount]; if (!loadUserPreset(name, v)) return; applyValues(v); std::copy(v, v + kParamCount, userVals); curUser = name; curFactory = -1; repaint(); }
     void programLoaded(uint32_t index) override { curFactory = (int)index; curUser.clear(); repaint(); }
@@ -829,8 +894,10 @@ protected:
         // keep the right side's ratio to the left, using the unmodulated times (synced sides: their current length)
         const float baseL = val[kSyncL] > 0.5f ? val[kOutTimeL] : val[kTimeL], baseR = val[kSyncR] > 0.5f ? val[kOutTimeR] : val[kTimeR];
         const float ratio = linked() ? 1.f : std::max(baseR, 0.5f) / std::max(baseL, 0.5f);
+        beginGesture();
         commit(kSyncL, 0); commit(kTimeL, ms);
         if (!linked()) { commit(kSyncR, 0); commit(kTimeR, clampf(ms * ratio, kMinDelayMs, kMaxDelayMs)); }
+        endGesture();
         val[kOutTimeL] = ms; if (!linked()) val[kOutTimeR] = ms * ratio;
         char b[64]; snprintf(b, sizeof b, "Tap tempo: %.0f ms  (%.1f BPM)", ms, 60000.f / ms); flash(b);
     }
@@ -864,7 +931,28 @@ protected:
         if (y < PS_Y || y > PS_Y + PS_H) return 0;
         if (x >= LEARN_X && x <= LEARN_X + LEARN_W) return 1;
         if (x >= MIDI_X && x <= MIDI_X + MIDI_W) return 2;
+        if (x >= UNDO_X && x <= UNDO_X + UR_W) return 3;
+        if (x >= REDO_X && x <= REDO_X + UR_W) return 4;
+        if (x >= HELP_X && x <= HELP_X + HELP_W) return 5;
+        if (x >= A_X && x < A_X + AB_W) return 6;
+        if (x >= A_X + AB_W && x < A_X + 2 * AB_W) return 7;
+        if (x >= COPY_X && x <= COPY_X + COPY_W) return 8;
         return 0;
+    }
+    int areaHit(float x, float y) const {
+        if (inRect(x, y, TAP_X, TAP_Y, TAP_W, TAP_H)) return kTipTap;
+        if (inRect(x, y, CLR2_X, CLR2_Y, CLR2_W, CLR2_H)) return kTipClear;
+        if (inRect(x, y, DISP_X, DISP_Y, DISP_W, DISP_H)) return kTipEchoes;
+        for (int f = 0; f < 2; ++f) if (inRect(x, y, (f == 0 ? F1X : F2X) + 14, R2 + 68, FW - 28, 58)) return kTipFilter;
+        for (int l = 0; l < 2; ++l) if (inRect(x, y, (l == 0 ? LF1X : LF2X) + 12, R2 + 34, LFW - 24, 30)) return kTipLfo;
+        if (inRect(x, y, ENVX + 12, R2 + 34, ENVW - 24, 38)) return kTipEnv;
+        return -1;
+    }
+    static float angleNorm(const Ctl& c, float x, float y) {
+        const float a = std::atan2(y - c.y, x - c.x), a0 = 0.75f * 3.14159265f;
+        float rel = a - a0; while (rel < 0) rel += 2 * 3.14159265f;
+        if (rel > 1.5f * 3.14159265f) rel = rel > 1.75f * 3.14159265f ? 0.f : 1.5f * 3.14159265f;
+        return rel / (1.5f * 3.14159265f);
     }
     int presetBarHit(float x, float y) const {
         if (y < PS_Y || y > PS_Y + PS_H || x < PS_X || x > PS_X + PS_W) return -1;
@@ -875,21 +963,25 @@ protected:
         int slot = -1;
         for (int s = 0; s < kNumSlots; ++s) if (!slotUsed(s)) { slot = s; break; }
         if (slot < 0) { flash("All 24 modulation slots are in use - remove one first"); return; }
+        beginGesture();
         const float amt = (dst == kDstTimeL || dst == kDstTimeR) ? (src == kSrcKey ? -1.f : 0.005f)
                         : ((src == kSrcKey && (dst == kDstF1Freq || dst == kDstF2Freq)) ? 0.2f : 0.3f);
         commit(slotParam(slot, kSlotSrc), (float)src); commit(slotParam(slot, kSlotDst), (float)dst);
         commit(slotParam(slot, kSlotAmt), amt); commit(slotParam(slot, kSlotBypass), 0);
+        endGesture();
         selSlot = slot;
         flash(std::string("Slot ") + std::to_string(slot + 1) + ": " + sourceName(src) + " > " + destName(dst));
     }
     void clearSlot(int s) {
+        beginGesture();
         commit(slotParam(s, kSlotSrc), 0); commit(slotParam(s, kSlotDst), 0); commit(slotParam(s, kSlotAmt), 0); commit(slotParam(s, kSlotBypass), 0);
+        endGesture();
     }
     void setLearn(bool on) { learnMode = on; learnWaiting = -1; if (!on) setState("cmd", "cancel"); repaint(); }
     void endEdit(bool apply) {
         if (editing < 0) return;
         const uint32_t p = effParam(controls()[editing]); float v;
-        if (apply && parse(p, editBuf, v)) commit(p, v);
+        if (apply && parse(p, editBuf, v)) { beginGesture(); commit(p, v); endGesture(); }
         editing = -1; editBuf.clear(); repaint();
     }
 
@@ -897,7 +989,13 @@ protected:
         if (!ev.press) return false;
         std::string* buf = saving ? &saveName : (editing >= 0 ? &editBuf : nullptr);
         if (!buf) {
-            if (ev.key == kKeyEscape && (learnMode || popup.open)) { popup.open = false; setLearn(false); return true; }
+            const bool cmd = (ev.mod & (kModifierControl | kModifierSuper)) != 0;
+            if (cmd && (ev.key == 'z' || ev.key == 'Z')) { if (ev.mod & kModifierShift) redo(); else undo(); return true; }
+            if (cmd && (ev.key == 'y' || ev.key == 'Y')) { redo(); return true; }
+            if (ev.key == kKeyEscape) {
+                if (helpOpen) helpOpen = false; else if (popup.open) popup.open = false; else if (menuOpen) menuOpen = false; else if (learnMode) setLearn(false);
+                repaint(); return true;
+            }
             return false;
         }
         if (ev.key == kKeyEnter) {
@@ -909,14 +1007,19 @@ protected:
         }
         if (ev.key == kKeyEscape) { if (saving) saving = false; else endEdit(false); repaint(); return true; }
         if (ev.key == kKeyBackspace || ev.key == kKeyDelete) { if (!buf->empty()) buf->pop_back(); repaint(); return true; }
-        if (ev.key >= 32 && ev.key < 127 && buf->size() < (saving ? 40u : 12u)) { *buf += (char)ev.key; repaint(); return true; }
+        if (ev.key >= 32 && ev.key < 127 && buf->size() < (saving ? 40u : 12u)) {
+            char ch = (char)ev.key;
+            if ((ev.mod & kModifierShift) && std::isalpha((unsigned char)ch)) ch = (char)std::toupper((unsigned char)ch);   // keys arrive unshifted
+            *buf += ch; repaint(); return true;
+        }
         return true;
     }
 
     bool onMouse(const MouseEvent& ev) override {
         const float s = uiScale(), x = ev.pos.getX() / s, y = ev.pos.getY() / s;
         if (saving) return true;
-        if (ev.press) statusFlash = 0;
+        if (ev.press) { flashUntil = 0; tipShown = false; tipSuppressed = tipKey; }
+        if (helpOpen) { if (ev.press && ev.button == 1) helpClick(x, y); return true; }
         if (ev.button == 2 && ev.press) {
             if (menuOpen) { const int m = menuHit(x, y); if (m >= 0 && menuItem(m).kind == 1) { pendingDelete = menuItem(m).idx; repaint(); } return true; }
             const int i = hit(x, y);
@@ -930,13 +1033,13 @@ protected:
                 if (i >= 0) { const int d = destForParam(effParam(controls()[i])); if (d >= 0) assign(dragSrc, d); }
                 dragSrc = -1; repaint(); return true;
             }
-            if (active >= 0) { editParameter(effParam(controls()[active]), false); active = -1; repaint(); return true; }
+            if (active >= 0) { editParameter(effParam(controls()[active]), false); active = -1; endGesture(); return true; }
             return false;
         }
         if (editing >= 0) endEdit(true);
         if (popup.open) {
             const int it = popupHit(x, y);
-            if (it >= 0) commit(popup.param, (float)it);
+            if (it >= 0) { beginGesture(); commit(popup.param, (float)it); endGesture(); }
             popup.open = false; repaint(); return true;
         }
         if (menuOpen) {
@@ -951,7 +1054,12 @@ protected:
         }
         const int hh = headerHit(x, y);
         if (hh == 1) { setLearn(!learnMode); return true; }
-        if (hh == 2) { commit(kMidiOn, val[kMidiOn] > 0.5f ? 0.f : 1.f); return true; }
+        if (hh == 2) { beginGesture(); commit(kMidiOn, val[kMidiOn] > 0.5f ? 0.f : 1.f); endGesture(); return true; }
+        if (hh == 3) { undo(); return true; }
+        if (hh == 4) { redo(); return true; }
+        if (hh == 5) { helpOpen = true; repaint(); return true; }
+        if (hh == 6 || hh == 7) { switchAB(hh - 6); return true; }
+        if (hh == 8) { copyAB(); return true; }
         const int pb = presetBarHit(x, y);
         if (pb == 0) { step(-1); return true; }
         if (pb == 2) { step(1); return true; }
@@ -959,7 +1067,7 @@ protected:
         if (!learnMode && inRect(x, y, TAP_X, TAP_Y, TAP_W, TAP_H)) { tap(ev.time); return true; }
         if (!learnMode && inRect(x, y, CLR2_X, CLR2_Y, CLR2_W, CLR2_H)) { setState("cmd", "panic"); flash("Echoes cleared"); return true; }
         if (!learnMode) { const int ch = chipHit(x, y); if (ch > 0) { dragSrc = ch; dragPX = x; dragPY = y; repaint(); return true; } }
-        if (learnMode && clearHit(x, y)) { setState("cmd", "clear"); for (int& m : paramCC) m = -1; repaint(); return true; }
+        if (learnMode && clearHit(x, y)) { setState("cmd", "clear"); for (int& m : paramCC) m = -1; flash("All MIDI assignments cleared"); return true; }
 
         int seg = 0; const int i = hit(x, y, &seg);
         if (i < 0) { selSlot = -1; return false; }
@@ -967,16 +1075,16 @@ protected:
         const uint32_t p = effParam(c);
         if (learnMode) { learnWaiting = (int)c.param; char b[24]; snprintf(b, sizeof b, "learn:%u", c.param); setState("cmd", b); repaint(); return true; }
         switch (c.type) {
-        case Toggle: commit(p, val[p] > 0.5f ? 0.f : 1.f); return true;
-        case Segment: commit(p, (float)seg); return true;
-        case Stepper: commit(p, (float)(((int)(val[p] + .5f) + seg + kNumStyles) % kNumStyles)); return true;
+        case Toggle: beginGesture(); commit(p, val[p] > 0.5f ? 0.f : 1.f); endGesture(); return true;
+        case Segment: beginGesture(); commit(p, (float)seg); endGesture(); return true;
+        case Stepper: beginGesture(); commit(p, (float)(((int)(val[p] + .5f) + seg + kNumStyles) % kNumStyles)); endGesture(); return true;
         case SlotSrc: case SlotDst: popup.open = true; popup.param = p; popup.x = c.x - 20; popup.y = c.y + 12; popup.hover = -1;
             selSlot = (int)(p - kSlotFirst) / 4; repaint(); return true;
-        case SlotByp: commit(p, val[p] > 0.5f ? 0.f : 1.f); return true;
+        case SlotByp: beginGesture(); commit(p, val[p] > 0.5f ? 0.f : 1.f); endGesture(); return true;
         case SlotDel: clearSlot((int)(p - kSlotFirst) / 4); return true;
         default: break;
         }
-        if (ev.mod & (kModifierControl | kModifierSuper)) { commit(p, defv[p]); return true; }
+        if (ev.mod & (kModifierControl | kModifierSuper)) { beginGesture(); commit(p, defv[p]); endGesture(); return true; }
         if (i == lastClick && ev.time - lastClickTime < 350) {
             lastClick = -1; editing = i;
             char b[48]; fmt(p, b, sizeof b); editBuf = b;
@@ -990,17 +1098,24 @@ protected:
         }
         lastClick = i; lastClickTime = ev.time;
         if (c.type == Mini) selSlot = (int)(p - kSlotFirst) / 4;
+        beginGesture();
         active = i; dragY = y; dragNorm = toNorm(p, val[p]);
-        editParameter(p, true); repaint();
+        const float dist = std::sqrt((x - c.x) * (x - c.x) + (y - c.y) * (y - c.y));
+        circular = c.type == Knob && c.r > 19 && dist > c.r * 0.62f && !(paramDef(p).hints & kHintInteger);   // grab the rim to turn it in a circle
+        editParameter(p, true);
+        if (circular) setValue(p, fromNorm(p, angleNorm(c, x, y)));
+        repaint();
         return true;
     }
 
     bool onMotion(const MotionEvent& ev) override {
         const float s = uiScale(), x = ev.pos.getX() / s, y = ev.pos.getY() / s;
         if (saving) return true;
+        if (helpOpen) { const int h = helpHit(x, y); if (h != helpHover) { helpHover = h; repaint(); } return true; }
         if (dragSrc > 0) { dragPX = x; dragPY = y; const int h = hit(x, y); hover = h; repaint(); return true; }
         if (active >= 0) {
             const uint32_t p = effParam(controls()[active]);
+            if (circular) { setValue(p, fromNorm(p, angleNorm(controls()[active], x, y))); return true; }
             float sens = (ev.mod & kModifierShift) ? 1500.f : 220.f;
             if (paramDef(p).hints & kHintInteger) sens = std::max(60.f, 14.f * (paramDef(p).max - paramDef(p).min));
             if (controls()[active].type == Mini) sens *= (ev.mod & kModifierShift) ? 1.f : 2.f;     // slot amounts: finer by default
@@ -1017,31 +1132,149 @@ protected:
         const bool ht = inRect(x, y, TAP_X, TAP_Y, TAP_W, TAP_H); if (ht != hoverTap) { hoverTap = ht; repaint(); }
         const bool h2 = inRect(x, y, CLR2_X, CLR2_Y, CLR2_W, CLR2_H); if (h2 != hoverClr2) { hoverClr2 = h2; repaint(); }
         const int h = hit(x, y); if (h != hover) { hover = h; repaint(); }
+        int key = -1;
+        if (h >= 0) key = controls()[h].type == SlotDel ? 3000 + kTipSlotDel : h;
+        else if (hh > 0) key = 1000 + hh; else if (pb >= 0) key = 2000 + pb; else if (ch > 0) key = 4000 + ch;
+        else { const int a = areaHit(x, y); if (a >= 0) key = 3000 + a; }
+        tipX = x; tipY = y;
+        if (key != tipKey) { const bool was = tipShown; tipKey = key; tipSince = nowSec(); tipShown = false; if (key != tipSuppressed) tipSuppressed = -2; if (was) repaint(); }
         return false;
     }
 
+    void uiIdle() override {
+        if (flashing() != flashShown) { flashShown = flashing(); repaint(); }
+        if (gTipsOn && !tipShown && tipKey >= 0 && tipKey != tipSuppressed && active < 0 && dragSrc <= 0 && !popup.open && !menuOpen && !saving && !helpOpen && editing < 0
+            && nowSec() - tipSince > 0.6) { tipShown = true; repaint(); }
+    }
+    bool tipContent(std::string& title, std::string& value, std::string& body) const {
+        if (tipKey < 0) return false;
+        if (tipKey < 1000) {
+            const Ctl& c = controls()[tipKey]; const uint32_t p = effParam(c); char b[48]; fmt(p, b, sizeof b);
+            title = paramDef(p).name; value = b; body = paramTip(p);
+            if (c.type == Knob || c.type == Mini) body += "\n\nDrag up/down (Shift for fine). Double-click to type a value, Cmd/Ctrl-click to reset.";
+            if (c.type == Knob && destForParam(p) >= 0) body += " Drop a source chip here to modulate it.";
+            if (dimmed(c.param)) body += "\n\n(Not active with the current settings.)";
+            if (paramCC[c.param] >= 0) { char cc[32]; snprintf(cc, sizeof cc, "   ·   CC%d", paramCC[c.param]); value += cc; }
+            return true;
+        }
+        if (tipKey >= 4000) {
+            const int src = tipKey - 4000; title = sourceName(src); value.clear(); body = targetTip(kTipChip); return true;
+        }
+        int t;
+        if (tipKey >= 3000) t = tipKey - 3000;
+        else if (tipKey >= 2000) t = kTipPrev + (tipKey - 2000);
+        else { const int hh = tipKey - 1000;
+            t = hh == 1 ? kTipLearn : hh == 2 ? kTipMidi : hh == 3 ? kTipUndo : hh == 4 ? kTipRedo : hh == 5 ? kTipHelp : hh == 6 ? kTipA : hh == 7 ? kTipB : kTipCopy; }
+        title = targetTitle(t); value.clear(); body = targetTip(t);
+        if (t == kTipUndo || t == kTipRedo) { const size_t n = t == kTipUndo ? undoStack.size() : redoStack.size(); char b[32]; snprintf(b, sizeof b, "%d step%s", (int)n, n == 1 ? "" : "s"); value = b; }
+        return true;
+    }
+    void drawTooltip() {
+        std::string title, value, body;
+        if (!tipContent(title, value, body)) return;
+        const float w = 330, pad = 12;
+        fontSize(11); textLetterSpacing(0.2f); textLineHeight(1.3f);
+        float bb[4]; textBoxBounds(0, 0, w - 2 * pad, body.c_str(), nullptr, bb);
+        const float h = pad + 16 + 8 + (bb[3] - bb[1]) + pad;
+        float x = tipX + 16, y = tipY + 20;
+        if (x + w > W - 8) x = tipX - w - 12;
+        if (y + h > H - 8) y = tipY - h - 12;
+        x = clampf(x, 8, W - w - 8); y = clampf(y, 8, H - h - 8);
+        beginPath(); rect(x - 10, y - 4, w + 20, h + 18); fillPaint(boxGradient(x, y + 3, w, h, 6, 14, Color(0, 0, 0, 0.55f), Color(0, 0, 0, 0.f))); fill();
+        beginPath(); roundedRect(x, y, w, h, 6); fillColor(Color(0x1e, 0x20, 0x23)); fill(); strokeColor(C_LINE); strokeWidth(1); stroke();
+        fontSize(10); textLetterSpacing(1.6f); textAlign(ALIGN_LEFT | ALIGN_TOP); fillColor(C_TEXT);
+        std::string up = title; for (char& ch : up) ch = (char)std::toupper((unsigned char)ch);
+        text(x + pad, y + pad + 1, up.c_str(), nullptr);
+        if (!value.empty()) { fontSize(10.5f); textLetterSpacing(0.4f); textAlign(ALIGN_RIGHT | ALIGN_TOP); fillColor(C_ACC); text(x + w - pad, y + pad + 1, value.c_str(), nullptr); }
+        fontSize(11); textLetterSpacing(0.2f); textLineHeight(1.3f); textAlign(ALIGN_LEFT | ALIGN_TOP); fillColor(C_DIM);
+        textBox(x + pad, y + pad + 24, w - 2 * pad, body.c_str(), nullptr);
+        textLineHeight(1.f);
+    }
+
+    // ---- help window ---------------------------------------------------------------
+    static constexpr float HX = 240, HY = 90, HW = 760, HH = 560, TAB_W = 180, TAB_H = 34;
+    int helpHit(float x, float y) const {
+        if (x < HX || x > HX + HW || y < HY || y > HY + HH) return -2;
+        for (int i = 0; i < kNumHelpPages; ++i) if (x >= HX + 12 && x < HX + 12 + TAB_W && y >= HY + 56 + i * TAB_H && y < HY + 56 + (i + 1) * TAB_H) return i;
+        const float by = HY + HH - 44;
+        if (y >= by && y < by + 28) {
+            if (x >= HX + 12 && x < HX + 12 + TAB_W) return 100;
+            if (x >= HX + HW - 330 && x < HX + HW - 140) return 101;
+            if (x >= HX + HW - 124 && x < HX + HW - 16) return 102;
+        }
+        if (x >= HX + HW - 40 && y < HY + 40) return 102;
+        return -1;
+    }
+    void helpClick(float x, float y) {
+        const int h = helpHit(x, y);
+        if (h >= 0 && h < kNumHelpPages) helpPage = h;
+        else if (h == 100) gTipsOn = !gTipsOn;
+        else if (h == 101) openURL(kManualURL);
+        else if (h == 102 || h == -2) helpOpen = false;
+        repaint();
+    }
+    void drawHelp() {
+        beginPath(); rect(0, 0, W, H); fillColor(Color(0, 0, 0, 0.55f)); fill();
+        beginPath(); roundedRect(HX, HY, HW, HH, 10); fillColor(C_PANEL); fill(); strokeColor(C_LINE); strokeWidth(1); stroke();
+        fontSize(13); textLetterSpacing(4.f); textAlign(ALIGN_LEFT | ALIGN_MIDDLE); fillColor(C_TEXT); text(HX + 22, HY + 28, "STRATA HELP", nullptr);
+        const float cx = HX + HW - 24, cy = HY + 26;
+        beginPath(); moveTo(cx - 6, cy - 6); lineTo(cx + 6, cy + 6); moveTo(cx + 6, cy - 6); lineTo(cx - 6, cy + 6); strokeColor(helpHover == 102 ? C_TEXT : C_DIM); strokeWidth(1.6f); stroke();
+        for (int i = 0; i < kNumHelpPages; ++i) {
+            const float ty = HY + 56 + i * TAB_H;
+            if (i == helpPage || i == helpHover) { beginPath(); roundedRect(HX + 12, ty + 2, TAB_W, TAB_H - 4, 5); fillColor(i == helpPage ? withAlpha(C_ACC, 0.16f) : C_PANEL_HI); fill(); }
+            if (i == helpPage) { beginPath(); roundedRect(HX + 12, ty + 8, 3, TAB_H - 16, 1.5f); fillColor(C_ACC); fill(); }
+            fontSize(11.5f); textLetterSpacing(0.6f); textAlign(ALIGN_LEFT | ALIGN_MIDDLE); fillColor(i == helpPage ? C_TEXT : C_DIM);
+            text(HX + 28, ty + TAB_H / 2 + 0.5f, kHelpPages[i].title, nullptr);
+        }
+        beginPath(); moveTo(HX + TAB_W + 26, HY + 56); lineTo(HX + TAB_W + 26, HY + HH - 56); strokeColor(C_LINE); strokeWidth(1); stroke();
+        const float bx = HX + TAB_W + 46, bw = HW - TAB_W - 70;
+        fontSize(15); textLetterSpacing(0.8f); textAlign(ALIGN_LEFT | ALIGN_TOP); fillColor(C_ACC); text(bx, HY + 60, kHelpPages[helpPage].title, nullptr);
+        fontSize(12); textLetterSpacing(0.2f); textLineHeight(1.38f); fillColor(Color(0xcc, 0xc8, 0xc0));
+        textBox(bx, HY + 92, bw, kHelpPages[helpPage].body, nullptr);
+        textLineHeight(1.f);
+        const float by = HY + HH - 44;
+        beginPath(); moveTo(HX + 12, by - 10); lineTo(HX + HW - 12, by - 10); strokeColor(C_LINE); stroke();
+        const float tw = 34, th = 18, tx = HX + 16, tyy = by + 14 - th / 2;
+        beginPath(); roundedRect(tx, tyy, tw, th, th / 2); fillColor(gTipsOn ? withAlpha(C_ACC, 0.25f) : C_PANEL_HI); fill(); strokeColor(gTipsOn ? C_ACC : C_LINE); stroke();
+        beginPath(); circle(gTipsOn ? tx + tw - th / 2 : tx + th / 2, by + 14, 6); fillColor(gTipsOn ? C_ACC : C_DIM); fill();
+        fontSize(10); textLetterSpacing(1.6f); textAlign(ALIGN_LEFT | ALIGN_MIDDLE); fillColor(helpHover == 100 ? C_TEXT : C_DIM); text(tx + tw + 10, by + 14.5f, "HOVER TIPS", nullptr);
+        auto btn = [&](float x0, float w0, const char* label, bool hot, bool primary) {
+            beginPath(); roundedRect(x0, by, w0, 28, 5); fillColor(primary ? (hot ? withAlpha(C_ACC, 0.32f) : withAlpha(C_ACC, 0.16f)) : (hot ? C_PANEL_HI : C_PANEL)); fill();
+            strokeColor(primary ? C_ACC : C_LINE); strokeWidth(1); stroke();
+            fontSize(9.5f); textLetterSpacing(1.8f); textAlign(ALIGN_CENTER | ALIGN_MIDDLE); fillColor(C_TEXT); text(x0 + w0 / 2, by + 14.5f, label, nullptr);
+        };
+        btn(HX + HW - 330, 190, "FULL MANUAL (WEB)", helpHover == 101, false);
+        btn(HX + HW - 124, 108, "CLOSE", helpHover == 102, true);
+    }
+
+
     bool onScroll(const ScrollEvent& ev) override {
         const float s = uiScale(), sx = ev.pos.getX() / s, sy = ev.pos.getY() / s;
-        if (menuOpen || saving || popup.open) return true;
+        if (menuOpen || saving || popup.open || helpOpen) return true;
         if (presetBarHit(sx, sy) >= 0) { step(ev.delta.getY() > 0 ? -1 : 1); return true; }
         const int i = hit(sx, sy); if (i < 0) return false;
         const Ctl& c = controls()[i]; const uint32_t p = effParam(c);
-        if (c.type == Stepper) { commit(p, (float)(((int)(val[p] + .5f) + (ev.delta.getY() > 0 ? 1 : -1) + kNumStyles) % kNumStyles)); return true; }
+        if (c.type == Stepper) { beginGesture(); commit(p, (float)(((int)(val[p] + .5f) + (ev.delta.getY() > 0 ? 1 : -1) + kNumStyles) % kNumStyles)); endGesture(); return true; }
         if (c.type != Knob && c.type != Mini) return false;
         float st = (ev.mod & kModifierShift) ? 0.004f : (c.type == Mini ? 0.005f : 0.025f);
         if (paramDef(p).hints & kHintInteger) st = 1.f / (paramDef(p).max - paramDef(p).min);
-        commit(p, fromNorm(p, toNorm(p, val[p]) + (ev.delta.getY() > 0 ? st : -st)));
+        beginGesture(); commit(p, fromNorm(p, toNorm(p, val[p]) + (ev.delta.getY() > 0 ? st : -st))); endGesture();
         return true;
     }
 
 private:
-    float val[kParamCount], defv[kParamCount], userVals[kParamCount] = {};
+    float val[kParamCount], defv[kParamCount], userVals[kParamCount] = {}, before[kParamCount];
     int paramCC[kParamCount];
     int active = -1, hover = -1, lastClick = -1, editing = -1, selSlot = -1;
     uint lastClickTime = 0;
-    float dragY = 0, dragNorm = 0;
+    float dragY = 0, dragNorm = 0; bool circular = false, gesture = false;
+    std::vector<Snap> undoStack, redoStack;
+    Snap abStore[2]; int abSlot = 0;
+    double flashUntil = 0; bool flashShown = false;
+    int tipKey = -1, tipSuppressed = -2; double tipSince = 0; bool tipShown = false; float tipX = 0, tipY = 0;
+    bool helpOpen = false; int helpPage = 0, helpHover = -1;
     int dragSrc = -1, hoverChip = -1; float dragPX = 0, dragPY = 0;
-    std::string editBuf, statusText; int statusFlash = 0;
+    std::string editBuf, statusText;
     int curFactory = 0, presetHover = -1, menuHover = -1, pendingDelete = -1, hoverHeader = 0;
     std::string curUser; std::vector<std::string> userPresets;
     bool menuOpen = false, saving = false, saveError = false; std::string saveName;
