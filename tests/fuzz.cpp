@@ -12,14 +12,18 @@ int main() {
                 const ParamDef& d = paramDef(i); if (d.hints & kHintOutput) continue;
                 if (u(g) < 0.5f) continue;                       // change about half the parameters per block
                 float v = (u(g) < .3f) ? (u(g) < .5f ? d.min : d.max) : d.min + (d.max - d.min) * u(g);
-                if (d.hints & kHintInteger) v = std::round(v); e.p[i] = v;
+                if (d.hints & kHintInteger) v = std::round(v);
+                e.p[i] = v;
             }
             e.setTransport(u(g) < .5f, u(g) < .5f, u(g) * 64, 20 + u(g) * 280, 2 + int(u(g) * 6));
-            if (u(g) < .3f) e.noteOn(int(u(g) * 128), 1 + int(u(g) * 126)); if (u(g) < .3f) e.noteOff(int(u(g) * 128));
-            if (u(g) < .1f) e.modWheel(int(u(g) * 128)); if (u(g) < .1f) e.pitchBend(int(u(g) * 16384)); if (u(g) < .1f) e.channelPressure(int(u(g) * 128));
+            if (u(g) < .3f) e.noteOn(int(u(g) * 128), 1 + int(u(g) * 126));
+            if (u(g) < .3f) e.noteOff(int(u(g) * 128));
+            if (u(g) < .1f) e.modWheel(int(u(g) * 128));
+            if (u(g) < .1f) e.pitchBend(int(u(g) * 16384));
+            if (u(g) < .1f) e.channelPressure(int(u(g) * 128));
             float in[400], L[400], R[400]; const float amp = u(g) < .2f ? 0 : (u(g) < .5f ? 4.f : 0.5f);
             for (float& x : in) x = amp * (2 * u(g) - 1);
-            e.process(in, in, L, R, 400);
+            if (u(g) < .5f) e.process(in, in, L, R, 400); else e.process(in, in, in, in, L, R, 400);     // with and without a sidechain
             for (int k = 0; k < 400; ++k) { if (!std::isfinite(L[k]) || !std::isfinite(R[k])) bad++; pk = std::max(pk, std::max(std::fabs(L[k]), std::fabs(R[k]))); }
         }
     }
