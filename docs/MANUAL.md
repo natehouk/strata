@@ -1,4 +1,4 @@
-# Strata 3.0 — User Manual
+# Strata 3.1 — User Manual
 
 Strata is a stereo tape delay. It has:
 

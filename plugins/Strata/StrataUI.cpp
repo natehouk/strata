@@ -548,7 +548,7 @@ protected:
         }
         fontSize(22); textLetterSpacing(9); fillColor(C_TEXT); textAlign(ALIGN_LEFT | ALIGN_MIDDLE); text(50, 34, "STRATA", nullptr);
         fontSize(9.5f); textLetterSpacing(2.5f); fillColor(C_DIM); text(216, 29, "STEREO TAPE DELAY", nullptr);
-        fontSize(7); textLetterSpacing(1.1f); fillColor(C_FAINT); text(216, 41, "EPSILON AUDIO 3.0", nullptr);
+        fontSize(7); textLetterSpacing(1.1f); fillColor(C_FAINT); text(216, 41, "EPSILON AUDIO 3.1", nullptr);
         drawPresetBar();
         for (int k = 0; k < 2; ++k) {
             const float x = A_X + k * AB_W; const bool on = abSlot == k, hot = hoverHeader == 6 + k;
