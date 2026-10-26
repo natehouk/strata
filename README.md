@@ -99,6 +99,7 @@ Strata is an audio effect that also accepts MIDI and has a sidechain input. To u
 - **MIDI** switch: turns all MIDI handling off.
 - **Clear Echoes** silences everything still in the delay lines. MIDI CC 120 (All Sound Off) does the same.
 - **60 factory presets** in eight categories: Echo, Ping-Pong, Tape & Dub, Modulation, Filtered, FX & Scratch, Multi-Tap, and Space & Pitch. **Lock Mix** keeps your mix when you change presets.
+- The preset browser **searches** names and categories as you type, and a star keeps a preset in **Favourites**.
 - **Save your own presets** as small text files, which load the same on every OS:
   - macOS: `~/Library/Audio/Presets/Epsilon Audio/Strata/`
   - Windows: `%APPDATA%\Epsilon Audio\Strata\Presets\`
@@ -191,6 +192,7 @@ New parameters are only ever appended, so saved sessions and automation keep wor
 
 ## Changelog
 
+- **Unreleased:** the preset browser searches names and categories as you type, and keeps Favourites.
 - **3.0:** 15 extra taps with a tap editor and tap patterns; six filters with five new styles, bell, shelf and notch shapes, 6 dB slopes, gain and per-channel routing; lo-fi, diffuse, dynamics and pitch effects in the loop; freeze; mid/side, width, wet level and pan, lock mix; ping-pong from the right; the Epsilon modulation system (4 XLFOs with step sequencers, 2 envelopes, 2 followers with a sidechain input, 2 XY pads, MIDI sources, 50 slots, per-source presets); a new interface; 17 new factory presets. Sessions and presets from 1.x and 2.x load unchanged and sound identical.
 - **2.0:** A/B with copy, undo/redo, hover tips, a help window and a full manual (in every release zip), rim-grab turning on the large knobs. Sessions and automation from 1.x load unchanged.
 - **1.0:** First release.

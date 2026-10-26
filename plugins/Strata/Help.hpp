@@ -173,7 +173,7 @@ inline const char* targetTip(int t) {
     case kTipA: case kTipB: return "Strata keeps two complete settings, A and B. Click the other letter to switch and compare.";
     case kTipCopy: return "Copies the current setting to the other slot.";
     case kTipPrev: return "Load the previous preset. The mouse wheel over the preset name also steps through presets.";
-    case kTipPresets: return "Open the preset browser: factory presets in eight categories, your own presets, and SAVE CURRENT AS. A * after the name means you have changed it. LOCK MIX (in OUTPUT) keeps the mix when you load one.";
+    case kTipPresets: return "Open the preset browser: factory presets in eight categories, your own presets, and SAVE CURRENT AS. A * after the name means you have changed it. LOCK MIX (in OUTPUT) keeps the mix when you load one. In the browser, type to search names and categories, and click a star to keep a preset in Favourites.";
     case kTipNext: return "Load the next preset.";
     case kTipChip: return "Drag this source onto any knob to modulate it. A slot is created with a starting amount, and the knob gets a coloured ring.";
     case kTipSlotDel: return "Removes this modulation slot.";
